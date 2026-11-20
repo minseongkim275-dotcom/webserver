@@ -47,6 +47,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* 접근 로그는 stdout으로 나간다. 파일이나 파이프로 보내도 서버가 도는 중에 한 줄씩 보이도록 줄 단위 버퍼링 */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     /* 쓰는 도중 클라이언트가 끊어도 프로세스가 죽지 않게 한다. (send에도 MSG_NOSIGNAL을 준다) */
     signal(SIGPIPE, SIG_IGN);
     struct sigaction sa;

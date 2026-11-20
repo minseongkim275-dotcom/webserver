@@ -296,6 +296,19 @@ else
     bad "설정 파일로 서버를 시작하지 못했다: $(cat "$WORK/server-$PORT2.log" 2>/dev/null | head -n 3)"
 fi
 
+# ── 접근 로그: 파일로 보내도 서버가 도는 중에 한 줄씩 보여야 한다 (-q 없이) ──
+PORT3=$((PORT + 3))
+if start_server "$PORT3" -r "$WWW"; then
+    curl -s -o /dev/null "http://127.0.0.1:$PORT3/a.txt"
+    curl -s -o /dev/null "http://127.0.0.1:$PORT3/nope"
+    sleep 0.3
+    alog=$(cat "$WORK/server-$PORT3.log")
+    expect_has "접근 로그(200)가 서버가 도는 중에 보인다" "$alog" '"GET /a.txt HTTP/1.1" 200 '
+    expect_has "접근 로그(404)" "$alog" '"GET /nope HTTP/1.1" 404 '
+else
+    bad "로그 확인용 서버를 시작하지 못했다"
+fi
+
 # ── 종료 처리: 쉬는 연결이 있어도 SIGTERM에 바로 정상 종료 ──
 exec 4<>"/dev/tcp/127.0.0.1/$PORT"
 printf 'GET /a.txt HTTP/1.1\r\nHost: x\r\n\r\n' >&4
