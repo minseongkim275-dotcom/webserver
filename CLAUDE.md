@@ -5,7 +5,7 @@
 ## 빌드와 테스트
 - 환경: Linux 또는 WSL(Ubuntu-22.04)의 gcc·make. epoll을 쓰므로 macOS에서는 빌드되지 않는다.
 - 전체 검사: `bash .claude/check.sh` (작업을 마치기 전에 반드시 통과해야 함. Stop 훅과 CI가 같은 파일을 실행함. 경고는 오류로 다룸)
-- 빌드: `make` → `build/webserver`, `build/backend`
+- 빌드: `make` → `build/webserver`, `build/demo-backend`
 - 단위 테스트만: `make unit`
 - 게이트 밖: `make asan` (AddressSanitizer + UBSan으로 같은 테스트. CI에서는 실행함)
 - 게이트 밖: `bash tests/load.sh` (부하 테스트. `ab`가 필요함: `sudo apt install apache2-utils`)
