@@ -159,6 +159,117 @@ expect "동시 300개 요청이 모두 200" "$conc" " 300 200"
 big_ok=$(seq 1 8 | xargs -P 8 -I{} sh -c "curl -s '$(url /big.bin)' | cmp -s - '$WWW/big.bin' && echo ok" | sort | uniq -c | tr -s ' ')
 expect "동시 5MB 다운로드 8개가 온전함" "$big_ok" " 8 ok"
 
+# ── Reverse Proxy ──
+BE=$((PORT + 10))
+BE2=$((PORT + 11))
+PPORT=$((PORT + 12))
+purl() { echo "http://127.0.0.1:$PPORT$1"; }
+LAST_PID=
+start_backend() { # 인자: 포트, 이름. 시작한 pid는 LAST_PID
+    "$BUILD/demo-backend" -p "$1" -n "$2" >"$WORK/be-$1.log" 2>&1 &
+    LAST_PID=$!
+    PIDS+=("$LAST_PID")
+    for _ in $(seq 1 50); do
+        (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && return 0
+        sleep 0.1
+    done
+    return 1
+}
+start_backend "$BE" a && BA_PID=$LAST_PID || bad "백엔드 a 시작 실패"
+start_backend "$BE2" b && BB_PID=$LAST_PID || bad "백엔드 b 시작 실패"
+printf 'listen %s\nroot %s\nupstream_timeout 2\nclient_timeout 5\nupstream api 127.0.0.1:%s 127.0.0.1:%s\nroute /api api\n' \
+    "$PPORT" "$WWW" "$BE" "$BE2" >"$WORK/proxy.conf"
+if start_server "$PPORT" -c "$WORK/proxy.conf" -q -p "$PPORT"; then
+    ok
+    PROXY_PID=${PIDS[${#PIDS[@]} - 1]}
+
+    # 라우팅: /api는 백엔드로, 나머지는 프록시가 직접 서빙
+    expect "프록시가 정적 파일을 직접 서빙" "$(curl -s "$(purl /a.txt)")" "hello"
+    expect "동적 처리: sum" "$(curl -s "$(purl '/api/sum?a=2&b=40')")" '{"sum":42}'
+    expect "백엔드의 404를 그대로 전달" "$(code "$(purl /api/nope)")" "404"
+    expect "POST 본문 전달 (echo)" "$(curl -s -d 'payload=1' "$(purl /api/echo)")" "payload=1"
+    head -c 600000 /dev/urandom >"$WORK/post.bin"
+    curl -s --data-binary @"$WORK/post.bin" -o "$WORK/echo.bin" "$(purl /api/echo)"
+    cmp -s "$WORK/post.bin" "$WORK/echo.bin" && ok || bad "600KB POST 본문이 그대로 돌아오지 않았다"
+    expect "413 큰 본문 (프록시 경로)" "$(code -X POST -d x --header 'Content-Length: 99999999' "$(purl /api/echo)")" "413"
+    expect "HEAD" "$(curl -s -I "$(purl /api/hello)" | tr -d '\r' | head -n1)" "HTTP/1.1 200 OK"
+    expect "keep-alive로 프록시 연결 재사용" "$(curl -s -o /dev/null -o /dev/null -w '%{num_connects} ' "$(purl /api/hello)" "$(purl /api/hello)")" "1 0 "
+
+    # Round-Robin
+    names=$(for _ in 1 2 3 4; do curl -s "$(purl /api/hello)" | grep -o '"backend":"[ab]"'; done | sort | uniq -c | tr -s ' ')
+    expect "Round-Robin: a 두 번, b 두 번" "$names" ' 2 "backend":"a"
+ 2 "backend":"b"'
+    seq1=$(for _ in 1 2 3 4; do curl -s "$(purl /api/hello)" | grep -o '"backend":"[ab]"'; done | uniq | wc -l)
+    expect "Round-Robin: 번갈아 간다" "$seq1" "4"
+
+    # 백엔드로 가는 헤더
+    hdrs=$(curl -s -H 'Connection: keep-alive' -H 'X-Forwarded-For: 9.9.9.9' -H 'Expect:' "$(purl /api/headers)")
+    expect_has "X-Forwarded-For를 덧붙임" "$hdrs" "X-Forwarded-For: 9.9.9.9, 127.0.0.1"
+    expect_has "X-Forwarded-Proto" "$hdrs" "X-Forwarded-Proto: http"
+    expect_has "백엔드에는 Connection: close" "$hdrs" "Connection: close"
+
+    # 응답 형식
+    expect "chunked 응답 본문" "$(curl -s "$(purl /api/chunked)")" "hello world"
+    expect_has "chunked 응답은 그대로 전달" "$(curl -s -D - -o /dev/null "$(purl /api/chunked)")" "Transfer-Encoding: chunked"
+    expect_has "길이를 모르는 응답 뒤에는 닫는다" "$(curl -s -D - -o /dev/null "$(purl /api/chunked)")" "Connection: close"
+    expect "3MB 본문 중계" "$(curl -s "$(purl '/api/big?kb=3000')" | wc -c | tr -d ' ')" "3072000"
+
+    # 타임아웃과 실패
+    t0=$SECONDS
+    expect "504 백엔드 응답 없음 (upstream_timeout 2초)" "$(code "$(purl '/api/slow?ms=4500')")" "504"
+    [ $((SECONDS - t0)) -le 4 ] && ok || bad "504가 너무 늦다: $((SECONDS - t0))초"
+    expect "느리지만 시간 안에 오면 200" "$(code "$(purl '/api/slow?ms=300')")" "200"
+    expect "502 백엔드가 응답 없이 끊음" "$(code "$(purl /api/drop)")" "502"
+
+    # 클라이언트가 중계 도중 끊는다
+    curl -s -m 1 --limit-rate 100k -o /dev/null "$(purl '/api/big?kb=20000')"
+    sleep 0.3
+    expect "중계 중 클라이언트가 끊어도 서버가 산다" "$(code "$(purl /api/hello)")" "200"
+
+    # 느린 클라이언트: upstream_timeout(2초)보다 오래 읽지 않다가 읽기 시작해도 응답이 잘리지 않아야 한다.
+    # (읽기를 재개하는 순간 백엔드 타임아웃 시계가 이미 지나 있으면 끊기던 문제. 확률적이라 세 명을 동시에 시험한다.)
+    sp=()
+    for d in 3.2 3.5 3.8; do
+        (
+            exec 5<>"/dev/tcp/127.0.0.1/$PPORT"
+            printf 'GET /api/big?kb=4096 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n' >&5
+            sleep "$d"
+            timeout 10 cat <&5 | wc -c >"$WORK/slow-$d.n"
+        ) &
+        sp+=($!)
+    done
+    wait "${sp[@]}"
+    for d in 3.2 3.5 3.8; do
+        [ "$(cat "$WORK/slow-$d.n" 2>/dev/null || echo 0)" -ge 4194304 ] && ok || bad "$d초 쉬고 읽은 클라이언트가 4MB를 다 받지 못했다: $(cat "$WORK/slow-$d.n") 바이트"
+    done
+
+    # 동시 요청
+    conc=$(seq 1 300 | xargs -P 40 -I{} curl -s -o /dev/null -w '%{http_code}\n' "$(purl /api/hello)" | sort | uniq -c | tr -s ' ')
+    expect "프록시 동시 300개 요청이 모두 200" "$conc" " 300 200"
+
+    # 백엔드 장애: a를 죽여도 b로 넘어간다
+    kill -KILL "$BA_PID" 2>/dev/null
+    wait "$BA_PID" 2>/dev/null
+    only=$(seq 1 6 | xargs -I{} curl -s -o /dev/null -w '%{http_code}\n' "$(purl /api/hello)" | sort | uniq -c | tr -s ' ')
+    expect "백엔드 a가 죽어도 모든 요청이 200 (b로 재시도)" "$only" " 6 200"
+    expect_has "죽은 백엔드로는 가지 않는다" "$(curl -s "$(purl /api/hello)")" '"backend":"b"'
+    # 둘 다 죽으면 502
+    kill -KILL "$BB_PID" 2>/dev/null
+    wait "$BB_PID" 2>/dev/null
+    expect "502 백엔드가 모두 죽음" "$(code "$(purl /api/hello)")" "502"
+    expect "백엔드가 없어도 정적 파일은 서빙" "$(curl -s "$(purl /a.txt)")" "hello"
+    # 되살아난 백엔드는 (down 표시가 남아 있어도) 다시 쓰인다
+    start_backend "$BE" a && ok || bad "백엔드 a 재시작 실패"
+    expect "백엔드가 돌아오면 다시 200" "$(code "$(purl /api/hello)")" "200"
+
+    # 프록시도 SIGTERM에 정상 종료한다 (ASan이면 누수 없이)
+    kill -TERM "$PROXY_PID"
+    wait "$PROXY_PID" 2>/dev/null
+    expect "프록시 SIGTERM 종료 코드" "$?" "0"
+else
+    bad "프록시 서버를 시작하지 못했다: $(head -n 3 "$WORK/server-$PPORT.log" 2>/dev/null)"
+fi
+
 # ── 시작 옵션과 설정 파일 ──
 "$BIN" -h >"$WORK/help.txt" 2>&1
 expect "-h 종료 코드" "$?" "0"

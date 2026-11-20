@@ -1,4 +1,4 @@
-# 빌드: make            → build/webserver, build/backend
+# 빌드: make            → build/webserver, build/demo-backend
 # 검사: make test       → 단위 테스트 + 기능 테스트 (게이트가 실행)
 #       make asan       → AddressSanitizer + UBSan으로 같은 테스트 (게이트 밖)
 # CFLAGS는 밖에서 바꿔도 되고(예: CFLAGS="-O2 -g -Werror"), 경고 옵션은 WARN에 따로 둔다.
@@ -22,7 +22,10 @@ TEST_BIN := $(TEST_SRC:%.c=$(BUILD)/%)
 
 .PHONY: all unit functional test asan clean
 .SECONDARY:
-all: $(BUILD)/libws.a $(BUILD)/webserver
+all: $(BUILD)/libws.a $(BUILD)/webserver $(BUILD)/demo-backend
+
+$(BUILD)/demo-backend: $(BUILD)/backend/backend.o $(BUILD)/libws.a
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BUILD)/webserver: $(BUILD)/src/main.o $(BUILD)/libws.a
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -52,4 +55,4 @@ asan:
 clean:
 	rm -rf build build-asan
 
--include $(LIB_OBJ:.o=.d) $(TEST_BIN:=.d) $(BUILD)/src/main.d
+-include $(LIB_OBJ:.o=.d) $(TEST_BIN:=.d) $(BUILD)/src/main.d $(BUILD)/backend/backend.d

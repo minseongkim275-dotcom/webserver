@@ -13,3 +13,11 @@
 - (static-server) `static_resolve`의 `realpath`와 `open` 사이에 경합 틈이 있다. root 안을 바꿀 수 있는 쪽은 위협 모델 밖으로 본다.
 - (static-server) `.`으로 시작하는 모든 경로 조각(`.well-known` 포함)에 403을 준다. 숨김 파일을 막으려는 의도다.
 - (static-server) root가 `/`이면 root 안 판정이 의도와 다르게 동작할 수 있다.
+- (reverse-proxy) 백엔드 응답이 `Transfer-Encoding: chunked`이고 클라이언트가 HTTP/1.0이면 chunked 본문을 그대로 전달한다.
+- (reverse-proxy) chunked 응답의 마지막 청크(`0\r\n\r\n`)를 해석하지 않고 백엔드가 닫을 때까지 기다린다. 백엔드에 `Connection: close`를 보내므로 정상 백엔드에서는 문제없다.
+- (reverse-proxy) `101 Switching Protocols`는 1xx 건너뛰기에서 제외되어 일반 응답처럼 처리된다. Upgrade 헤더를 전달하지 않으므로 쓸 일이 없다.
+- (reverse-proxy) 읽기를 멈춘 백엔드 연결에도 HUP/ERR 이벤트는 오므로 256KB 한도를 조금 넘겨 읽을 수 있다 (소켓에 남은 만큼으로 끝남).
+- (reverse-proxy) 클라이언트가 같은 값의 Content-Length를 중복해서 보내면 백엔드로 두 번 전달된다.
+- (reverse-proxy) 데모 백엔드의 accept 루프는 EMFILE 같은 오류에서 대기 없이 돈다. 테스트 상대역이라 영향이 작다.
+- (reverse-proxy) 백엔드 응답을 기다리는 동안 클라이언트가 FIN으로 정상 종료한 것은 쓰기를 시도하거나 타임아웃이 날 때까지 알아채지 못한다 (RST/HUP은 바로 닫음).
+- (reverse-proxy) `ev_mod`가 실패하면 interest가 `(unsigned)-1`로 남아 읽기 재개 시 `last_active` 갱신 조건을 비껴갈 수 있다. epoll_ctl 실패는 거의 없고 그때 연결은 이미 비정상이다.

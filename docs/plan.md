@@ -10,7 +10,7 @@
 | `feat/build-setup` | 완료, dev에 병합됨 (Makefile, test.h, buf, check.sh, CI) |
 | `feat/http-parser` | 완료, dev에 병합됨 (리뷰 2회) |
 | `feat/static-server` | 완료, dev에 병합됨 (fsutil, config, event, server, main, 기능 테스트). 프록시 때 server.c에 이어서 붙인다 |
-| `feat/reverse-proxy` | 시작 전 |
+| `feat/reverse-proxy` | 완료, dev에 병합됨 (router, proxy, server.c 프록시 상태 머신, 데모 백엔드, 기능 테스트. 리뷰 2회) |
 | `test/load-and-asan` | 시작 전 |
 | README | 시작 전. 팀 규칙대로 목차와 한 줄 요약을 개발자에게 먼저 확인받는다 |
 
@@ -94,7 +94,7 @@
 - 클라이언트 `out`이 256KB를 넘으면 백엔드 EPOLLIN을 끄고, 줄어들면 다시 켬.
 - 클라이언트가 끊기면 짝 백엔드 연결도 닫음 (지연 해제 목록으로).
 
-### 데모 백엔드 (`backend/backend.c`, Makefile에 `build/backend` 추가)
+### 데모 백엔드 (`backend/backend.c`, Makefile에 `build/demo-backend` 추가)
 - `backend -p 9001 -n 이름`. 연결마다 detached pthread, `http_parse_request`로 요청을 읽고 `Connection: close`로 응답.
 - `GET /api/hello` → JSON `{"backend":"이름","count":N}` (N은 원자적 카운터)
 - `POST /api/echo` → 받은 본문 그대로
