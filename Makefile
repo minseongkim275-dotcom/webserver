@@ -20,9 +20,12 @@ LIB_OBJ  := $(LIB_SRC:%.c=$(BUILD)/%.o)
 TEST_SRC := $(wildcard tests/test_*.c)
 TEST_BIN := $(TEST_SRC:%.c=$(BUILD)/%)
 
-.PHONY: all unit test asan clean
+.PHONY: all unit functional test asan clean
 .SECONDARY:
-all: $(BUILD)/libws.a
+all: $(BUILD)/libws.a $(BUILD)/webserver
+
+$(BUILD)/webserver: $(BUILD)/src/main.o $(BUILD)/libws.a
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BUILD)/libws.a: $(LIB_OBJ)
 	$(AR) rcs $@ $^
@@ -37,7 +40,10 @@ $(BUILD)/tests/%: $(BUILD)/tests/%.o $(BUILD)/libws.a
 unit: $(TEST_BIN)
 	@fail=0; for t in $(TEST_BIN); do ./$$t || fail=1; done; exit $$fail
 
-test: unit
+functional: all
+	BUILD=$(BUILD) bash tests/functional.sh
+
+test: all unit functional
 
 asan:
 	$(MAKE) BUILD=build-asan CFLAGS="-O1 -g" \
@@ -46,4 +52,4 @@ asan:
 clean:
 	rm -rf build build-asan
 
--include $(LIB_OBJ:.o=.d) $(TEST_BIN:=.d)
+-include $(LIB_OBJ:.o=.d) $(TEST_BIN:=.d) $(BUILD)/src/main.d
