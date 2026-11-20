@@ -8,7 +8,8 @@
 - 빌드: `make` → `build/webserver`, `build/demo-backend`
 - 단위 테스트만: `make unit`
 - 게이트 밖: `make asan` (AddressSanitizer + UBSan으로 같은 테스트. CI에서는 실행함)
-- 게이트 밖: `bash tests/load.sh` (부하 테스트. `ab`가 필요함: `sudo apt install apache2-utils`)
+- 게이트 밖: `make valgrind` (기능 테스트를 valgrind 아래에서 실행. 서버 종료 코드로 누수를 확인함. valgrind 필요)
+- 게이트 밖: `make load` (부하 테스트. 의존성 없는 `build/loadgen`으로 정적 파일과 프록시를 동시 연결 수별로 측정해 출력함. 저장소가 WSL의 `/mnt/c`에 있어도 정적 root는 임시 폴더로 복사해 씀)
 
 ## 문서
 - 과제 요구사항 원문: `docs/requirements.md` (대화에 다시 붙여넣지 않고 이 파일을 읽는다)

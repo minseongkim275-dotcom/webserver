@@ -4,6 +4,7 @@
 set -u
 cd "$(dirname "$0")/.."
 BUILD=${BUILD:-build}
+WRAP=${WRAP:-}   # 예: WRAP="valgrind -q --leak-check=full --error-exitcode=99" (make valgrind)
 BIN="$BUILD/webserver"
 PORT=${PORT:-$((10000 + RANDOM % 20000))}   # 임시 포트 범위(32768~)와 겹치지 않게
 PORT2=$((PORT + 1))
@@ -43,7 +44,7 @@ first_line() { printf '%s' "$1" | head -n1 | tr -d '\r'; }
 start_server() { # 인자: 포트, 나머지는 서버 옵션. 시작하면 PIDS의 마지막에 pid가 들어간다
     local port=$1
     shift
-    "$BIN" -p "$port" "$@" >"$WORK/server-$port.log" 2>&1 &
+    $WRAP "$BIN" -p "$port" "$@" >"$WORK/server-$port.log" 2>&1 &
     local pid=$!
     PIDS+=("$pid")
     for _ in $(seq 1 50); do
