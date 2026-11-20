@@ -8,8 +8,8 @@
 | 브랜치 | 상태 |
 |---|---|
 | `feat/build-setup` | 완료, dev에 병합됨 (Makefile, test.h, buf, check.sh, CI) |
-| `feat/http-parser` | 구현·테스트 통과, `make asan` 통과. **리뷰 결과 반영 후 커밋 대기** (http.c/h, mime.c/h, test_http.c, test_mime.c) |
-| `feat/static-server` | 초안만 `stage/src/`에 있음 (fsutil, config). 컴파일·테스트 전 |
+| `feat/http-parser` | 완료, dev에 병합됨 (리뷰 2회) |
+| `feat/static-server` | 완료, dev에 병합됨 (fsutil, config, event, server, main, 기능 테스트). 프록시 때 server.c에 이어서 붙인다 |
 | `feat/reverse-proxy` | 시작 전 |
 | `test/load-and-asan` | 시작 전 |
 | README | 시작 전. 팀 규칙대로 목차와 한 줄 요약을 개발자에게 먼저 확인받는다 |
