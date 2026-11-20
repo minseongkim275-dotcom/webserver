@@ -21,3 +21,9 @@
 - (reverse-proxy) 데모 백엔드의 accept 루프는 EMFILE 같은 오류에서 대기 없이 돈다. 테스트 상대역이라 영향이 작다.
 - (reverse-proxy) 백엔드 응답을 기다리는 동안 클라이언트가 FIN으로 정상 종료한 것은 쓰기를 시도하거나 타임아웃이 날 때까지 알아채지 못한다 (RST/HUP은 바로 닫음).
 - (reverse-proxy) `ev_mod`가 실패하면 interest가 `(unsigned)-1`로 남아 읽기 재개 시 `last_active` 갱신 조건을 비껴갈 수 있다. epoll_ctl 실패는 거의 없고 그때 연결은 이미 비정상이다.
+- (load) 정적 파일의 `realpath`/`open`/`pread`는 이벤트 루프 스레드에서 블로킹으로 실행된다. 저장소가 WSL의 `/mnt/c`(9p)에 있을 때 정적 요청 하나가 약 2~3ms 걸려 서버 전체 처리량이 약 300 rps로 떨어지는 것을 측정했다 (같은 파일을 ext4에 두면 수천~2만 rps). 느린 파일 시스템에서는 프록시 요청도 같이 느려진다. 완화하려면 파일 I/O를 스레드 풀로 넘기거나 `sendfile`/파일 정보 캐시를 쓴다.
+- (load) loadgen은 Content-Length가 없는 응답을 읽다가 수신 타임아웃(10초)이 나도 성공으로 센다. 우리 서버는 항상 Content-Length를 보내므로 실제로 걸리지 않는다.
+- (load) loadgen은 스레드 생성에 실패해도 종료 코드 0이고, 결과 줄에는 요청한 `c`가 그대로 찍힌다 (경고는 stderr에만 나감).
+- (load) loadgen의 지연은 연결 시간을 포함하지 않는다 (keep-alive 대상에서는 맞음). `Connection:close`(공백 없음)는 놓치고, 호스트는 IP만 받는다.
+- (load) load.sh는 서버·백엔드 프로세스가 살아 있는지(`kill -0`)까지는 확인하지 않고 포트가 열렸는지만 본다. 포트는 무작위라 충돌은 드물다.
+- (load) `make valgrind`는 주 서버와 프록시 서버의 종료 코드만 검사한다 (설정 파일 서버는 보지 않음).
