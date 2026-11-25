@@ -68,7 +68,8 @@ build/webserver [-c conf] [-p port] [-r root] [-q]
 | `max_body <bytes>` | 1048576 | 요청 본문 한도. 넘으면 413 |
 | `client_timeout <초>` | 15 | 조용한 클라이언트 연결을 닫기까지 |
 | `upstream_timeout <초>` | 5 | 백엔드 응답을 기다리는 시간. 넘으면 504 |
-| `max_conns <n>` | 10000 | 동시 연결 한도 |
+| `max_conns <n>` | 10000 | 동시 연결 한도 (워커 모드에서는 워커 하나당) |
+| `workers <n\|auto>` | 1 | 프로세스 수. 2 이상이면 master 하나와 워커 N개. `auto`는 코어 수 |
 | `upstream <이름> <ip:port>...` | | 백엔드 묶음. 이름이 아니라 IP만 받습니다(이름 풀이는 블로킹이라 이벤트 루프에서 하지 않음) |
 | `route <접두사> <upstream 이름\|static>` | | 가장 긴 접두사가 이깁니다. 맞는 route가 없으면 정적 파일 |
 
@@ -95,6 +96,8 @@ build/webserver [-c conf] [-p port] [-r root] [-q]
 | `src/event` | epoll 래퍼 (macOS 지원을 넣을 때 바꿀 경계) | 예 |
 | `src/server` | 이벤트 루프, 연결 상태 머신, 타임아웃, 종료 | 예 |
 
+`workers 2` 이상이면 nginx처럼 동작합니다. master가 listen 소켓을 한 번 만들고 워커를 fork합니다. 워커마다 자기 epoll 루프를 돌며 같은 listen 소켓에서 손님을 받습니다. master는 손님을 받지 않습니다. master는 세 가지를 합니다. 신호로 죽은 워커를 다시 띄웁니다. SIGTERM이나 SIGINT를 받으면 워커들에 SIGTERM을 보냅니다. 워커가 모두 종료 코드 0으로 끝나야 0으로 끝납니다. 워커 하나가 0이 아닌 코드로 스스로 끝나면 나머지 워커도 내리고 1로 끝납니다. Round-Robin 순서와 죽은 백엔드 표시는 워커마다 따로 셉니다.
+
 소켓을 만지지 않는 모듈은 전부 순수 함수라서 단위 테스트로 검사합니다. 연결은 클라이언트 쪽 `READ_HEAD → READ_BODY → WRITE` 또는 `PROXY`로 움직이고, 백엔드 쪽은 `CONNECT → SEND → HEAD → RELAY`로 움직입니다. 자세한 그림은 [docs/design.md](docs/design.md)에 있습니다.
 
 ## 설계 결정
@@ -104,6 +107,7 @@ build/webserver [-c conf] [-p port] [-r root] [-q]
 | epoll 이벤트 루프 (단일 스레드, non-blocking) | 연결 수가 스레드 수에 묶이지 않음(C10K) | 연결마다 상태 머신이 필요해 복잡함, Linux 전용 | **선택** |
 | 스레드 풀 + blocking I/O | 코드가 위에서 아래로 읽힘, 이식성 | keep-alive 연결이 워커를 점유함 | 제외 |
 | fork per request | 가장 단순 | 프로세스끼리 Round-Robin 상태를 공유하기 어려움 | 제외 |
+| epoll 루프 × 워커 N개 (master + fork) | 여러 코어에서 돌 수 있음(처리량은 측정하지 않음), 워커 하나가 죽어도 나머지는 계속 응답 | Round-Robin·백엔드 상태가 워커마다 따로임 | **선택 사항** (`workers`, 기본 1) |
 
 이벤트 루프에서 특히 신경 쓴 것:
 
