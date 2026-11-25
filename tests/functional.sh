@@ -309,6 +309,35 @@ else
     bad "로그 확인용 서버를 시작하지 못했다"
 fi
 
+# ── 워커 모드: master 하나 + 워커 N개. 죽은 워커는 다시 띄우고, SIGTERM은 워커까지 정리한다 ──
+PORT4=$((PORT + 4))
+printf 'workers 2\n' >"$WORK/workers.conf"
+if start_server "$PORT4" -c "$WORK/workers.conf" -r "$WWW" -q; then
+    MPID=${PIDS[${#PIDS[@]} - 1]}
+    sleep 0.3
+    expect "워커 2개" "$(pgrep -P "$MPID" | wc -l)" "2"
+    expect "워커가 응답" "$(curl -s "http://127.0.0.1:$PORT4/a.txt")" "hello"
+    victim=$(pgrep -P "$MPID" | head -n1)
+    kill -KILL "$victim"
+    # 죽은 워커는 master가 거둘 때까지 좀비로 pgrep에 남으므로, 그 pid가 사라질 때까지 기다린다
+    for _ in $(seq 1 30); do
+        if ! pgrep -P "$MPID" | grep -qx "$victim" && [ "$(pgrep -P "$MPID" | wc -l)" = 2 ]; then break; fi
+        sleep 0.1
+    done
+    expect "죽은 워커를 다시 띄움" "$(pgrep -P "$MPID" | wc -l)" "2"
+    expect "다시 띄운 뒤에도 응답" "$(curl -s "http://127.0.0.1:$PORT4/a.txt")" "hello"
+    WPIDS=$(pgrep -P "$MPID")
+    kill -TERM "$MPID"
+    wait "$MPID" 2>/dev/null
+    expect "워커 모드 SIGTERM 종료 코드" "$?" "0"
+    left=0
+    for w in $WPIDS; do kill -0 "$w" 2>/dev/null && left=$((left + 1)); done
+    expect "종료 뒤 남은 워커" "$left" "0"
+    PIDS[${#PIDS[@]} - 1]=""
+else
+    bad "워커 모드 서버를 시작하지 못했다: $(head -n 3 "$WORK/server-$PORT4.log" 2>/dev/null)"
+fi
+
 # ── 종료 처리: 쉬는 연결이 있어도 SIGTERM에 바로 정상 종료 ──
 exec 4<>"/dev/tcp/127.0.0.1/$PORT"
 printf 'GET /a.txt HTTP/1.1\r\nHost: x\r\n\r\n' >&4

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static int fail(char *err, size_t errlen, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 static int fail(char *err, size_t errlen, const char *fmt, ...) {
@@ -24,6 +25,7 @@ void config_defaults(config *c) {
     c->client_timeout = 15;
     c->upstream_timeout = 5;
     c->max_conns = 10000;
+    c->workers = 1;
 }
 
 /* 10진 정수만, 범위 [lo, hi] */
@@ -83,6 +85,17 @@ int config_apply_line(config *c, const char *line, char *err, size_t errlen) {
         else if (strcmp(k, "client_timeout") == 0) c->client_timeout = (int)v;
         else if (strcmp(k, "upstream_timeout") == 0) c->upstream_timeout = (int)v;
         else c->max_conns = (int)v;
+        return 0;
+    }
+    if (strcmp(k, "workers") == 0) {
+        if (n != 2) return fail(err, errlen, "workers: expects a number or 'auto'");
+        if (strcmp(w[1], "auto") == 0) {
+            long cores = sysconf(_SC_NPROCESSORS_ONLN);
+            v = cores < 1 ? 1 : cores > CFG_MAX_WORKERS ? CFG_MAX_WORKERS : cores;
+        } else if (parse_num(w[1], 1, CFG_MAX_WORKERS, &v) < 0) {
+            return fail(err, errlen, "workers: bad number '%s' (1..%d or auto)", w[1], CFG_MAX_WORKERS);
+        }
+        c->workers = (int)v;
         return 0;
     }
     if (strcmp(k, "root") == 0) {

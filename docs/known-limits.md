@@ -28,3 +28,11 @@
 - (load) load.sh는 서버·백엔드 프로세스가 살아 있는지(`kill -0`)까지는 확인하지 않고 포트가 열렸는지만 본다. 포트는 무작위라 충돌은 드물다.
 - (load) `make valgrind`는 주 서버와 프록시 서버의 종료 코드만 검사한다 (설정 파일 서버는 보지 않음).
 - (access-log) 접근 로그를 줄 단위 버퍼링으로 바꿔 로그 한 줄마다 write 시스콜이 하나 늘어난다. 처리량 영향은 측정하지 않았다. `-q`로 끌 수 있다.
+- (workers) 워커 모드에서 Round-Robin 순서, 죽은 백엔드 표시, `max_conns`가 워커마다 따로다. 전체 연결 한도는 `max_conns × workers`까지 열린다.
+- (workers) 워커를 다시 띄우다 fork가 실패하면 그 자리는 다시 시도하지 않는다. 마지막 워커가 그렇게 사라지면 master가 종료 코드 0으로 끝난다.
+- (workers) 다시 띄우기에 지연이 없다. 워커가 시작하자마자 매번 크래시하면 master가 쉬지 않고 fork를 반복한다.
+- (workers) 종료 중에는 워커가 각자 listen 소켓을 닫지만 master는 끝날 때까지 들고 있다. 그 사이에 온 연결은 backlog에서 기다리다 master가 끝날 때 RST를 받는다.
+- (workers) master가 SIGKILL로 죽으면 워커가 고아로 남아 포트를 계속 잡는다 (`PR_SET_PDEATHSIG` 없음).
+- (workers) 모든 워커가 listen 소켓 하나를 같이 보고 `EPOLLEXCLUSIVE`도 `SO_REUSEPORT`도 쓰지 않는다. 연결 하나에 워커가 모두 깨어나고(thundering herd), 연결이 한 워커에 몰릴 수 있다. `make load`는 워커 모드를 재지 않는다.
+- (workers) 파이프로 보낸 접근 로그는 PIPE_BUF(4096바이트)보다 긴 줄이 워커끼리 섞일 수 있다 (target은 약 8KB까지 들어옴).
+- (workers) 기능 테스트는 워커가 다시 떴는지만 보고, 응답이 새 워커에서 왔는지는 보지 않는다. start_server의 준비 확인은 listen 소켓만 보므로 워커가 떴다는 증거가 아니다.

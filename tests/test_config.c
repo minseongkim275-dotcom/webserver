@@ -17,6 +17,19 @@ static void defaults(void) {
     CHECK_INT(c.max_body, 1024 * 1024);
     CHECK_INT(c.client_timeout, 15);
     CHECK_INT(c.upstream_timeout, 5);
+    CHECK_INT(c.workers, 1); /* 기본은 지금처럼 프로세스 하나 */
+}
+
+static void workers_directive(void) {
+    config c;
+    config_defaults(&c);
+    CHECK_INT(apply(&c, "workers 4"), 0);
+    CHECK_INT(c.workers, 4);
+    CHECK_INT(apply(&c, "workers auto"), 0);
+    CHECK_INT(c.workers, sysconf(_SC_NPROCESSORS_ONLN) > 0 ? sysconf(_SC_NPROCESSORS_ONLN) : 1);
+    CHECK_INT(apply(&c, "workers 0"), -1);
+    CHECK_INT(apply(&c, "workers 2x"), -1);
+    CHECK_INT(apply(&c, "workers"), -1);
 }
 
 static void simple_directives(void) {
@@ -146,6 +159,7 @@ int main(void) {
     RUN(defaults);
     RUN(simple_directives);
     RUN(bad_directives);
+    RUN(workers_directive);
     RUN(backend_addresses);
     RUN(upstreams_and_routes);
     RUN(unknown_upstream_is_an_error);

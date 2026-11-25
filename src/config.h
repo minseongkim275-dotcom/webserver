@@ -10,6 +10,7 @@
 #define CFG_MAX_UPSTREAMS 16
 #define CFG_MAX_BACKENDS 16
 #define CFG_MAX_ROUTES 32
+#define CFG_MAX_WORKERS 256
 #define CFG_NAME_LEN 32
 #define CFG_PREFIX_LEN 256
 
@@ -38,7 +39,8 @@ typedef struct {
     long long max_body;
     int client_timeout;   /* 초 */
     int upstream_timeout; /* 초 */
-    int max_conns;
+    int max_conns;        /* 워커 모드에서는 워커 하나당 한도 */
+    int workers;          /* 1이면 master 없이 프로세스 하나. 2 이상이면 master + 워커 N개 */
     int quiet;            /* 접근 로그 끄기 */
     upstream ups[CFG_MAX_UPSTREAMS];
     int nups;
