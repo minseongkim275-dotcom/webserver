@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -779,22 +780,20 @@ static int listen_on(server *s) {
     return fd;
 }
 
-int server_run(config *cfg, const char *root_real, volatile sig_atomic_t *stop) {
+/* 이벤트 루프 하나. 워커 모드에서는 워커마다 따로 돈다.
+ * epoll은 fork 뒤에 만든다: fork 전에 만들면 모든 워커가 같은 epoll 인스턴스를 나눠 써서 이벤트가 섞인다. */
+static int run_loop(config *cfg, const char *root_real, int lfd, volatile sig_atomic_t *stop) {
     server s;
     memset(&s, 0, sizeof s);
     s.cfg = cfg;
     s.root = root_real;
-    s.lfd = -1;
+    s.lfd = lfd;
     s.last_sweep = mono();
 
     s.ep = ev_create();
     if (s.ep < 0) {
         fprintf(stderr, "webserver: epoll_create1: %s\n", strerror(errno));
-        return 1;
-    }
-    s.lfd = listen_on(&s);
-    if (s.lfd < 0) {
-        close(s.ep);
+        close(lfd);
         return 1;
     }
     s.lconn.fd = s.lfd;
@@ -847,4 +846,74 @@ int server_run(config *cfg, const char *root_real, volatile sig_atomic_t *stop) 
     close(s.ep);
     fflush(stdout);
     return 0;
+}
+
+/* 워커 하나를 띄운다. 워커는 물려받은 listen 소켓으로 자기 루프를 돌고 끝나면 그 코드로 exit한다.
+ * _exit가 아니라 exit: ASan/LSan의 누수 검사가 워커에서도 돌게 한다. */
+static pid_t spawn_worker(config *cfg, const char *root_real, int lfd, volatile sig_atomic_t *stop) {
+    pid_t pid = fork();
+    if (pid == 0) exit(run_loop(cfg, root_real, lfd, stop));
+    if (pid < 0) fprintf(stderr, "webserver: fork: %s\n", strerror(errno));
+    return pid;
+}
+
+/* master: 손님을 받지 않는다. 워커 수를 지키고, 종료 신호를 워커에 전달하고, 워커 종료 코드를 모은다.
+ * Round-Robin 순서와 죽은 백엔드 표시는 워커마다 따로다 (fork 뒤 cfg가 워커마다 복사된다). */
+static int run_master(config *cfg, const char *root_real, int lfd, volatile sig_atomic_t *stop) {
+    pid_t pids[CFG_MAX_WORKERS];
+    int n = cfg->workers, alive = 0, rc = 0, signalled = 0;
+    for (int i = 0; i < n; i++) {
+        pids[i] = rc ? -1 : spawn_worker(cfg, root_real, lfd, stop);
+        if (pids[i] > 0) alive++;
+        else rc = 1; /* 시작부터 fork가 안 되면 띄운 것까지 정리하고 실패로 끝낸다 */
+    }
+    if (!rc) fprintf(stderr, "webserver: master %ld, %d workers\n", (long)getpid(), n);
+
+    while (alive > 0) {
+        if ((*stop || rc) && !signalled) {
+            for (int i = 0; i < n; i++)
+                if (pids[i] > 0) kill(pids[i], SIGTERM);
+            signalled = 1;
+        }
+        int st;
+        pid_t p = waitpid(-1, &st, WNOHANG);
+        if (p == 0 || (p < 0 && errno == EINTR)) {
+            /* 블로킹 waitpid는 쓰지 않는다: *stop을 본 직후에 신호가 오면 waitpid 안에서 영원히 기다린다 */
+            struct timespec ts = {0, 100 * 1000 * 1000};
+            nanosleep(&ts, NULL);
+            continue;
+        }
+        if (p < 0) break; /* ECHILD: 남은 자식이 없음 */
+        int i = 0;
+        while (i < n && pids[i] != p) i++;
+        if (i == n) continue;
+        pids[i] = -1;
+        alive--;
+        if (WIFSIGNALED(st)) {
+            /* 크래시나 kill로 죽은 워커는 종료 전이면 다시 띄운다. 종료 코드에는 넣지 않는다:
+             * 누수 검사(ASan, valgrind)는 exit 코드로 알리고, 신호 죽음은 이 로그로 알린다.
+             * 스스로 끝난 워커(Ctrl-C, 시작 실패)는 다시 띄우지 않는다 */
+            fprintf(stderr, "webserver: worker %ld died (signal %d)%s\n", (long)p, WTERMSIG(st),
+                    signalled ? "" : ", restarting");
+            if (!signalled) {
+                pids[i] = spawn_worker(cfg, root_real, lfd, stop);
+                if (pids[i] > 0) alive++;
+            }
+            continue;
+        }
+        if (WEXITSTATUS(st) != 0) rc = 1;
+    }
+    close(lfd);
+    return rc;
+}
+
+int server_run(config *cfg, const char *root_real, volatile sig_atomic_t *stop) {
+    server tmp; /* listen_on이 cfg와 root만 본다 */
+    memset(&tmp, 0, sizeof tmp);
+    tmp.cfg = cfg;
+    tmp.root = root_real;
+    int lfd = listen_on(&tmp);
+    if (lfd < 0) return 1;
+    if (cfg->workers <= 1) return run_loop(cfg, root_real, lfd, stop);
+    return run_master(cfg, root_real, lfd, stop);
 }
